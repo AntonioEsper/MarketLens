@@ -1,0 +1,13 @@
+streamlit
+pandas
+firebase-admin
+pyrebase4
+fredapi
+textblob
+setuptools
+yfinance
+curl_cffi
+certifi
+requests-cache
+matplotlib
+investpy 

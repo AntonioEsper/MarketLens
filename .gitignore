@@ -1,0 +1,70 @@
+Ficheiro de configuração de segredos do Streamlit
+.streamlit/secrets.toml
+
+Ficheiros de cache do Python
+pycache/
+*.pyc
+
+Ficheiros de sistema do VSCode
+.vscode/
+
+Ficheiros de sistema do Windows/macOS
+.DS_Store
+Thumbs.db
+
+
+Este ficheiro garante que as suas chaves de API e outros ficheiros de sistema nunca sejam enviados para o GitHub.
+
+---
+
+### **Fase 2: Criar o Repositório no GitHub**
+
+**Ação 2.1: Vá para o Site do GitHub**
+
+1.  Faça login na sua conta do GitHub.
+2.  No canto superior direito, clique no ícone `+` e selecione **"New repository"**.
+3.  **Nome do Repositório:** Dê um nome, por exemplo, `MarketLens`.
+4.  **Descrição:** Adicione uma breve descrição, como "Plataforma de Análise Macroeconómica e Journaling com Streamlit e Firebase."
+5.  **Público ou Privado:** Escolha se quer que o projeto seja visível para todos (Público) ou apenas para si (Privado).
+6.  **IMPORTANTE:** **Não** marque nenhuma das caixas para "Initialize this repository with: A README file, A .gitignore, a license". Queremos começar com um repositório completamente vazio.
+7.  Clique em **"Create repository"**.
+
+O GitHub irá agora mostrar-lhe uma página com alguns comandos. Nós iremos usar os comandos da secção **"...or push an existing repository from the command line"**.
+
+---
+
+### **Fase 3: Enviar o Código para o GitHub ("Committar")**
+
+**Ação 3.1: Execute os Comandos no Seu Terminal**
+
+Abra o seu terminal, navegue até à pasta raiz do seu projeto `MarketLens/` e execute os seguintes comandos, um de cada vez, na ordem exata.
+
+1.  **Inicialize o Git no seu projeto:**
+    ```bash
+    git init
+    ```
+
+2.  **Adicione todos os ficheiros (exceto os ignorados) ao seu "commit":**
+    ```bash
+    git add .
+    ```
+
+3.  **Crie o "commit" (um snapshot do seu projeto) com a mensagem "v1.0":**
+    ```bash
+    git commit -m "v1.0: Versão estável com Dashboard Macro inicial e pilares de Login/Journaling."
+    ```
+
+4.  **Diga ao Git qual é o ramo principal (uma convenção moderna):**
+    ```bash
+    git branch -M main
+    ```
+
+5.  **Conecte o seu projeto local ao repositório que criou no GitHub:**
+    *(Copie a linha que começa com `git remote add origin` da sua página do GitHub e cole-a aqui. Será algo parecido com isto):*
+    ```bash
+    git remote add origin https://github.com/SEU_NOME_DE_UTILIZADOR/MarketLens.git
+    ```
+
+6.  **Envie o seu código para o GitHub:**
+    ```bash
+    git push -u origin main
