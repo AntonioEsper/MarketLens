@@ -11,3 +11,4 @@ certifi
 requests-cache
 matplotlib
 investpy 
+sodapy
