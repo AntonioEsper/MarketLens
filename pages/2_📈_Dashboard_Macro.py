@@ -15,7 +15,8 @@ from view_utils import setup_sidebar
 setup_sidebar()
 
 # --- IMPORTAÇÕES DOS NOSSOS MÓDULOS ---
-from utils.config import yahoo_finance_map, cot_market_map
+# ALTERAÇÃO: Importa também a nova estrutura ASSET_CATEGORIES
+from utils.config import yahoo_finance_map, cot_market_map, ASSET_CATEGORIES
 from utils.data_loader import get_yfinance_data, get_cot_data
 from utils.components import create_simple_line_chart
 from utils.analysis import calculate_global_risk_gauge
@@ -29,12 +30,37 @@ st.caption("A sua central de análise para a tomada de decisões.")
 st.markdown("---")
 
 # --- BARRA LATERAL: SELEÇÃO DE ATIVOS ---
+# ***** INÍCIO DA ÚNICA ALTERAÇÃO *****
 with st.sidebar:
     st.markdown("---")
     st.header("Seleção de Ativo")
-    lista_ativos = list(cot_market_map.keys())
-    ativo_selecionado = st.selectbox("Selecione o Ativo para Análise:", lista_ativos, index=lista_ativos.index("EUR/USD"))
+
+    # Cria a lista de opções a partir da nova estrutura de categorias
+    options_list = []
+    for category, assets in ASSET_CATEGORIES.items():
+        options_list.append(category)
+        options_list.extend(assets)
+
+    # Função para formatar a exibição dos títulos
+    def format_asset_display(option):
+        if option.startswith("---"):
+            return f"--- {option.strip('- ')} ---"
+        return option
+
+    ativo_selecionado = st.selectbox(
+        "Selecione o Ativo para Análise:",
+        options=options_list,
+        format_func=format_asset_display,
+        index=1  # Padrão EUR/USD
+    )
+
+    # Se o utilizador selecionar um título, a aplicação para e pede para selecionar um ativo
+    if ativo_selecionado.startswith("---"):
+        st.warning("Por favor, selecione um ativo válido para análise.")
+        st.stop()
     st.markdown("---")
+# ***** FIM DA ÚNICA ALTERAÇÃO *****
+
 
 # --- FUNÇÃO HELPER ---
 def calculate_change(data_series):
@@ -47,7 +73,7 @@ def calculate_change(data_series):
 # --- WIDGET 1: GRÁFICO PRINCIPAL ---
 ticker_selecionado = yahoo_finance_map.get(ativo_selecionado)
 if ticker_selecionado:
-    dados_ativo = get_yfinance_data(ticker_selecionado, period="2y") 
+    dados_ativo = get_yfinance_data(ticker_selecionado, period="2y")
     if not dados_ativo.empty:
         dados_series = dados_ativo.iloc[:, 0] if isinstance(dados_ativo, pd.DataFrame) else dados_ativo
         latest_price, daily_change = calculate_change(dados_series)
@@ -73,15 +99,15 @@ dados_macro = get_yfinance_data(trio_macro_tickers, period="1y")
 
 if not dados_macro.empty:
     col1, col2 = st.columns([1, 2])
-    
+
     with col1:
         st.subheader("Medidor de Risco Global")
         risk_score, risk_verdict = calculate_global_risk_gauge(dados_macro['^VIX'].dropna(), dados_macro['DX-Y.NYB'].dropna())
-        
+
         gauge_color = "#4caf50"
         if "Neutro" in risk_verdict: gauge_color = "#ffc107"
         elif "Risk-Off" in risk_verdict: gauge_color = "#f44336"
-        
+
         fig_gauge = go.Figure(go.Indicator(
             mode = "gauge+number", value = risk_score,
             title = {'text': risk_verdict, 'font': {'size': 24}},
@@ -122,7 +148,7 @@ with tab1:
             dados_series = dados_sazonais.iloc[:, 0] if isinstance(dados_sazonais, pd.DataFrame) else dados_sazonais
             dados_series.index = pd.to_datetime(dados_series.index)
             dados_anuais = dados_series.groupby(dados_series.index.year)
-            
+
             fig_sazonalidade = go.Figure()
             current_year = datetime.now().year
             for year, data in dados_anuais:
@@ -139,7 +165,7 @@ with tab1:
 
 with tab2:
     st.subheader(f"Posicionamento Institucional vs. Varejo para {ativo_selecionado}")
-    
+
     # Usa o novo cot_market_map para obter o CÓDIGO do contrato
     cot_contract_code = cot_market_map.get(ativo_selecionado)
     if cot_contract_code:
@@ -148,7 +174,7 @@ with tab2:
 
         if dados_cot is not None and not dados_cot.empty:
             latest_report = dados_cot.iloc[-1]
-            
+
             net_noncomm = latest_report['noncomm_long'] - latest_report['noncomm_short']
             net_nonrept = latest_report['nonrept_long'] - latest_report['nonrept_short']
 
