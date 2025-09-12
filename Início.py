@@ -27,6 +27,6 @@ st.header("A sua plataforma de análise de mercado financeiro.")
 st.write("Utilize o menu à esquerda para navegar pelas diferentes ferramentas de análise.")
 
 if db:
-    st.sidebar.success("Conectado ao Firebase")
+    st.sidebar.success("Conectado ao MarketLens")
 else:
-    st.sidebar.error("Falha na conexão com o Firebase")
+    st.sidebar.error("Falha na conexão com o MarketLens DB")
