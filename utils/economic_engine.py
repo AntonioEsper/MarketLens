@@ -1,77 +1,57 @@
 # marketlens/utils/economic_engine.py
 
-import streamlit as st
 import pandas as pd
+import streamlit as st
+from firebase_config import db
 from fredapi import Fred
 from .config import FRED_SERIES_MAP
-from firebase_config import db # Importa a nossa instância do Firestore
 
 def update_fred_data_in_firestore():
     """
-    Função principal do motor de dados económicos.
-
-    Itera sobre todos os indicadores definidos no FRED_SERIES_MAP,
-    busca o seu histórico completo na API do FRED e armazena os
-    dados numa coleção dedicada no Firestore.
-
-    Esta função foi desenhada para ser executada sob demanda para popular
-    ou atualizar o nosso "data warehouse".
+    Motor que busca o histórico de dados económicos do FRED e os armazena no Firestore.
+    Esta função foi atualizada para ser um gerador, emitindo mensagens de status.
     """
-    
-    # Validação inicial para garantir que a conexão com o Firestore está ativa.
-    if not db:
-        st.error("A conexão com o Firestore não está disponível. O motor de dados não pode continuar.")
-        return
-
     try:
-        # Inicializa a API do FRED com a chave guardada nos segredos do Streamlit.
         fred = Fred(api_key=st.secrets["FRED_API_KEY"])
     except Exception as e:
-        st.error(f"Não foi possível inicializar a API do FRED. Verifique a sua chave. Erro: {e}")
+        yield f"❌ Falha ao inicializar a API do FRED. Verifique a sua API Key. Erro: {e}"
         return
 
-    st.info(f"Iniciando a atualização de {len(FRED_SERIES_MAP)} séries de dados económicos...")
-    
-    success_count = 0
-    # Itera sobre cada item no nosso dicionário de configuração.
-    for series_name, series_info in FRED_SERIES_MAP.items():
-        series_id = series_info['id']
+    if not FRED_SERIES_MAP:
+        yield "❌ O `FRED_SERIES_MAP` no ficheiro de configuração está vazio."
+        return
+
+    total_series = len(FRED_SERIES_MAP)
+    yield f"ℹ️ A iniciar a atualização para {total_series} séries económicas..."
+
+    for i, (series_name, series_info) in enumerate(FRED_SERIES_MAP.items()):
+        series_id = series_info.get("id")
+        if not series_id:
+            yield f"({i+1}/{total_series}) ⚠️ Aviso: Série '{series_name}' não tem um ID definido. A ignorar."
+            continue
         
-        with st.spinner(f"Processando: {series_name}..."):
-            try:
-                # 1. BUSCAR DADOS DA API DO FRED
-                # Busca o histórico completo da série de dados.
-                data = fred.get_series(series_id)
-                data = data.dropna() # Remove quaisquer valores nulos.
+        try:
+            yield f"({i+1}/{total_series}) 🔄 A buscar dados para '{series_name}'..."
+            
+            # Busca os dados da API do FRED
+            df_series = fred.get_series(series_id).dropna()
 
-                if data.empty:
-                    st.warning(f"Não foram encontrados dados para {series_name} ({series_id}).")
-                    continue
+            if not df_series.empty:
+                # Converte o índice para string para ser compatível com JSON/Firestore
+                df_series.index = df_series.index.strftime('%Y-%m-%d')
+                # Converte a Série para um dicionário
+                data_to_store = df_series.to_dict()
 
-                # 2. PREPARAR DADOS PARA O FIRESTORE
-                # Converte os dados para um formato JSON (string).
-                # O Firestore lida bem com strings longas e este formato preserva
-                # a estrutura de data e valor.
-                data_json = data.to_json(orient='split', date_format='iso')
+                # O nome do documento será o ID da série para garantir unicidade
+                doc_ref = db.collection("economic_data").document(series_id)
+                doc_ref.set({"history": data_to_store, "name": series_name})
 
-                # 3. ARMAZENAR DADOS NO FIRESTORE
-                # Define o caminho no Firestore: /economic_data/{Nome da Série}
-                # Usamos o nome amigável como ID do documento para facilitar a identificação.
-                doc_ref = db.collection("economic_data").document(series_name)
-                
-                # Guarda os dados. O método 'set' cria o documento se não existir
-                # ou sobrescreve-o se já existir.
-                doc_ref.set({
-                    "series_id": series_id,
-                    "currency_impact": series_info['currency'],
-                    "last_updated": pd.Timestamp.now().isoformat(),
-                    "history_json": data_json
-                })
-                
-                st.write(f"✅ {series_name}: Dados históricos guardados com sucesso no Firestore.")
-                success_count += 1
+                yield f"({i+1}/{total_series}) ✅ Sucesso: Dados de '{series_name}' guardados no Firestore."
+            else:
+                yield f"({i+1}/{total_series}) ⚠️ Aviso: Não foram encontrados dados para '{series_name}'."
 
-            except Exception as e:
-                st.error(f"❌ Falha ao processar {series_name}. Erro: {e}")
+        except Exception as e:
+            yield f"({i+1}/{total_series}) ❌ Falha ao processar {series_name}. Erro: {e}"
 
-    st.success(f"Operação concluída! {success_count} de {len(FRED_SERIES_MAP)} séries foram atualizadas com sucesso.")
+    yield "✅ Processo Concluído!"
+

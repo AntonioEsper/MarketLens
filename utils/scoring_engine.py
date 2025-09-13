@@ -1,179 +1,149 @@
 # marketlens/utils/scoring_engine.py
 
-import streamlit as st
 import pandas as pd
-from datetime import datetime
+import streamlit as st
 from firebase_config import db
-from .config import cot_market_map, FRED_SERIES_MAP
+from .config import FRED_SERIES_MAP, cot_market_map
 
-# --- FUNÇÕES DE LEITURA DO FIRESTORE ---
+# --- FUNÇÕES DE LEITURA DO FIRESTORE (O NOSSO "DATA WAREHOUSE") ---
 
-def get_cot_history_from_firestore(sanitized_asset_name):
-    """Lê o histórico de dados do COT do Firestore para um ativo específico."""
-    try:
-        doc_ref = db.collection("cot_data").document(sanitized_asset_name)
-        doc = doc_ref.get()
-        if doc.exists:
-            data_dict = doc.to_dict()
-            df = pd.DataFrame.from_dict(data_dict, orient='index')
-            df.index = pd.to_datetime(df.index)
-            # Converte colunas para numérico, tratando erros
-            for col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-            df = df.dropna()
-            return df.sort_index()
-        
-        # --- MODIFICAÇÃO PARA DIAGNÓSTICO ---
-        # Se o documento não for encontrado, exibe um aviso para nos ajudar a depurar.
-        st.warning(f"Diagnóstico: Documento '{sanitized_asset_name}' não foi encontrado na coleção 'cot_data' do Firestore.")
+def get_cot_history_from_firestore(asset_name):
+    """Lê o histórico de dados do COT para um ativo a partir do Firestore."""
+    sanitized_name = asset_name.replace('/', '_')
+    doc_ref = db.collection("cot_data").document(sanitized_name)
+    doc = doc_ref.get()
+    if doc.exists:
+        data = doc.to_dict()
+        df = pd.DataFrame.from_dict(data, orient='index')
+        df.index = pd.to_datetime(df.index)
+        return df.sort_index()
+    else:
+        # CORREÇÃO: Remove o aviso de diagnóstico. A função agora falha silenciosamente.
         return pd.DataFrame()
 
-    except Exception as e:
-        st.error(f"Erro ao ler dados do COT do Firestore para {sanitized_asset_name}: {e}")
-        return pd.DataFrame()
+def get_seasonality_from_firestore(asset_name):
+    """Lê os dados de sazonalidade para um ativo a partir do Firestore."""
+    sanitized_name = asset_name.replace('/', '_')
+    doc_ref = db.collection("seasonality_data").document(sanitized_name)
+    doc = doc_ref.get()
+    if doc.exists:
+        data = doc.to_dict()
+        df = pd.DataFrame.from_dict(data)
+        return df
+    return pd.DataFrame()
 
 def get_economic_data_from_firestore(series_id):
-    """Lê o histórico de dados económicos do Firestore para uma série específica."""
-    try:
-        doc_ref = db.collection("economic_data").document(series_id)
-        doc = doc_ref.get()
-        if doc.exists:
-            data_dict = doc.to_dict()
-            df = pd.DataFrame(list(data_dict.items()), columns=['date', 'value'])
-            df['date'] = pd.to_datetime(df['date'])
-            df = df.set_index('date')
-            df['value'] = pd.to_numeric(df['value'], errors='coerce')
-            df = df.dropna()
-            return df.sort_index()
-        return pd.DataFrame()
-    except Exception as e:
-        st.error(f"Erro ao ler dados económicos do Firestore para {series_id}: {e}")
-        return pd.DataFrame()
+    """Lê o histórico de uma série económica a partir do Firestore."""
+    doc_ref = db.collection("economic_data").document(series_id)
+    doc = doc_ref.get()
+    if doc.exists:
+        data = doc.to_dict().get("history", {})
+        series = pd.Series(data)
+        series.index = pd.to_datetime(series.index)
+        return series.sort_index()
+    return pd.Series(dtype=float)
 
-def get_seasonality_from_firestore(sanitized_asset_name):
-    """Lê os dados de sazonalidade do Firestore para um ativo específico."""
-    try:
-        doc_ref = db.collection("seasonality_data").document(sanitized_asset_name)
-        doc = doc_ref.get()
-        if doc.exists:
-            data_dict = doc.to_dict()
-            df = pd.DataFrame.from_dict(data_dict, orient='index', columns=['average_return'])
-            df.index = df.index.astype(int)
-            return df.sort_index()
-        return pd.DataFrame()
-    except Exception as e:
-        st.error(f"Erro ao ler dados de sazonalidade do Firestore para {sanitized_asset_name}: {e}")
-        return pd.DataFrame()
-
-# --- FUNÇÕES DE CÁLCULO DE SCORE ---
+# --- FUNÇÕES DE CÁLCULO DE SCORE INDIVIDUAL ---
 
 def score_cot_positioning(asset_name):
-    """Calcula o score de posicionamento do COT."""
-    sanitized_name = asset_name.replace('/', '_')
+    """Calcula o score com base no posicionamento líquido do COT."""
+    # APERFEIÇOAMENTO: Verifica primeiro se o ativo deve ter dados COT.
     if asset_name not in cot_market_map:
-        return 0, "N/A"
+        return 0, "N/A"  # Retorna N/A (Não Aplicável) se não houver dados
 
-    df_cot = get_cot_history_from_firestore(sanitized_name)
-    if df_cot.empty or len(df_cot) < 2:
-        return 0, "Dados Insuficientes"
-
-    latest = df_cot.iloc[-1]
-    net_noncomm = latest['noncomm_long'] - latest['noncomm_short']
+    df_cot = get_cot_history_from_firestore(asset_name)
+    if df_cot.empty or len(df_cot) < 4:
+        return 0, "Insuficiente" # Dados insuficientes para análise
     
-    score = 0
-    if net_noncomm > 0:
-        score = 2
-        text = "Bullish"
-    elif net_noncomm < 0:
-        score = -2
-        text = "Bearish"
-    else:
-        score = 0
-        text = "Neutro"
-        
-    return score, text
-
-def score_economic_momentum(currency):
-    """Calcula um score de momentum económico agregado para uma moeda."""
-    total_score = 0
-    relevant_series_count = 0
+    latest_report = df_cot.iloc[-1]
+    net_noncomm = latest_report['noncomm_long'] - latest_report['noncomm_short']
     
-    for series_name, series_info in FRED_SERIES_MAP.items():
-        if series_info['currency'] == currency:
-            relevant_series_count += 1
-            df_econ = get_economic_data_from_firestore(series_info['id'])
-            
-            if not df_econ.empty and len(df_econ) >= 3:
-                latest_value = df_econ['value'].iloc[-1]
-                previous_value = df_econ['value'].iloc[-4] if len(df_econ) > 3 else df_econ['value'].iloc[0]
-                
-                if "Unemployment" in series_name:
-                    if latest_value < previous_value: total_score += 1
-                    elif latest_value > previous_value: total_score -= 1
-                else:
-                    if latest_value > previous_value: total_score += 1
-                    elif latest_value < previous_value: total_score -= 1
+    avg_net_noncomm = (df_cot['noncomm_long'] - df_cot['noncomm_short']).rolling(window=4).mean().iloc[-1]
 
-    if relevant_series_count == 0:
-        return 0, "N/A"
-    
-    avg_score = total_score / relevant_series_count
-    
-    if avg_score > 0.5: text = "Positivo"
-    elif avg_score < -0.5: text = "Negativo"
-    else: text = "Neutro"
-
-    final_score = round(max(min(total_score, 2), -2))
-    
-    return final_score, text
-
+    if net_noncomm > 0 and net_noncomm > avg_net_noncomm:
+        return 1, "Bullish"
+    elif net_noncomm < 0 and net_noncomm < avg_net_noncomm:
+        return -1, "Bearish"
+    return 0, "Neutro"
 
 def score_seasonality(asset_name):
-    """Calcula o score de sazonalidade para o mês atual."""
-    sanitized_name = asset_name.replace('/', '_')
-    df_season = get_seasonality_from_firestore(sanitized_name)
+    """Calcula o score com base no padrão de sazonalidade para o mês atual."""
+    df_seasonality = get_seasonality_from_firestore(asset_name)
+    if df_seasonality.empty:
+        return 0, "Neutro"
 
-    if df_season.empty:
-        return 0, "N/A"
+    current_month_name = pd.Timestamp.now().strftime('%b')
+    if current_month_name in df_seasonality.index:
+        avg_return = df_seasonality.loc[current_month_name, 'mean_return']
+        if avg_return > 0.5:
+            return 1, "Bullish"
+        elif avg_return < -0.5:
+            return -1, "Bearish"
+    return 0, "Neutro"
 
-    current_month = datetime.now().month
-    
-    if current_month in df_season.index:
-        monthly_return = df_season.loc[current_month, 'average_return']
+def score_economic_indicator(series_data, impact_direction):
+    """Calcula o score para um único indicador económico baseado no seu momentum."""
+    if series_data.empty or len(series_data) < 12:
+        return 0
         
-        score = 0
-        text = "Neutro"
-        if monthly_return > 0.5:
-            score = 2
-            text = "Bullish"
-        elif monthly_return < -0.5:
-            score = -2
-            text = "Bearish"
-        return score, text
-    
-    return 0, "N/A"
+    sma_12 = series_data.rolling(window=12).mean().iloc[-1]
+    latest_value = series_data.iloc[-1]
 
-# --- FUNÇÃO MESTRE ---
+    score = 0
+    if latest_value > sma_12:
+        score = 1
+    elif latest_value < sma_12:
+        score = -1
+
+    if impact_direction == 'negative':
+        score *= -1
+        
+    return score
+
+# --- FUNÇÕES DE CÁLCULO DE SCORE AGREGADO ---
+
+def calculate_overall_economic_score(currency):
+    """Calcula o score económico agregado para uma determinada moeda."""
+    total_score = 0
+    count = 0
+    
+    for series_name, series_info in FRED_SERIES_MAP.items():
+        if series_info.get("currency") == currency:
+            series_id = series_info.get("id")
+            impact = series_info.get("impact_on_currency", "positive")
+            
+            series_data = get_economic_data_from_firestore(series_id)
+            if not series_data.empty:
+                total_score += score_economic_indicator(series_data, impact)
+                count += 1
+    
+    return total_score / count if count > 0 else 0
 
 def calculate_synapse_score(asset_name):
-    """
-    Função mestre que calcula o score final para um ativo.
-    """
-    individual_scores = {}
-
-    cot_score, cot_text = score_cot_positioning(asset_name)
-    individual_scores['COT'] = {"score": cot_score, "text": cot_text}
-
-    seasonality_score, seasonality_text = score_seasonality(asset_name)
-    individual_scores['Sazonalidade'] = {"score": seasonality_score, "text": seasonality_text}
-
-    total_score = cot_score + seasonality_score
+    """Função MESTRE que calcula o score final e os scores individuais para um ativo."""
+    scores = {}
     
-    if total_score >= 3: verdict = "Very Bullish"
-    elif total_score > 0: verdict = "Bullish"
-    elif total_score <= -3: verdict = "Very Bearish"
-    elif total_score < 0: verdict = "Bearish"
-    else: verdict = "Neutral"
+    cot_score, _ = score_cot_positioning(asset_name)
+    scores['COT'] = cot_score
 
-    return total_score, verdict, individual_scores
+    seasonality_score, _ = score_seasonality(asset_name)
+    scores['Sazonalidade'] = seasonality_score
+    
+    if "/" in asset_name:
+        base_currency, quote_currency = asset_name.split('/')
+        base_econ_score = calculate_overall_economic_score(base_currency)
+        quote_econ_score = calculate_overall_economic_score(quote_currency)
+        scores['Economia'] = round(base_econ_score - quote_econ_score, 2)
+    else:
+        scores['Economia'] = round(calculate_overall_economic_score("USD"), 2)
+
+    final_score = sum(scores.values())
+    
+    verdict = "Neutro"
+    if final_score >= 1.5: verdict = "Very Bullish"
+    elif final_score > 0.5: verdict = "Bullish"
+    elif final_score <= -1.5: verdict = "Very Bearish"
+    elif final_score < -0.5: verdict = "Bearish"
+
+    return final_score, verdict, scores
 

@@ -3,76 +3,107 @@
 import streamlit as st
 import pandas as pd
 from view_utils import setup_sidebar
-from utils.config import ASSET_CATEGORIES
+# CORREÇÃO: Importa também o cot_market_map para a verificação
+from utils.config import ASSET_CATEGORIES, cot_market_map
 from utils.scoring_engine import calculate_synapse_score
 
 # --- CONFIGURAÇÃO DA PÁGINA E AUTENTICAÇÃO ---
 st.set_page_config(layout="wide", page_title="Scanner de Mercado")
 setup_sidebar()
 
-# Guarda de autenticação
 if 'user_info' not in st.session_state or st.session_state['user_info'] is None:
     st.warning("Acesso restrito. Por favor, faça o login.")
     st.stop()
 
-# --- TÍTULO DA PÁGINA ---
-st.title("🔬 Scanner de Mercado")
-st.caption("Análise multifatorial para identificar os ativos com o maior viés direcional.")
+# --- CABEÇALHO ---
+st.title("🔬 Scanner de Mercado (Synapse Score)")
+st.caption("Uma visão geral do mercado baseada na confluência de múltiplos fatores.")
 st.markdown("---")
 
-# --- LÓGICA DE CÁLCULO E EXIBIÇÃO ---
-try:
-    with st.spinner("A analisar o mercado... O nosso motor está a calcular os scores para todos os ativos."):
-        # 1. Obter a lista completa de ativos a partir da configuração
-        all_assets = []
-        for category, assets in ASSET_CATEGORIES.items():
-            all_assets.extend(assets)
+# --- LÓGICA DO SCANNER ---
+
+# Cria uma lista de todos os ativos a serem processados, mantendo a sua categoria
+assets_to_scan = []
+for category, assets in ASSET_CATEGORIES.items():
+    for asset in assets:
+        assets_to_scan.append({"asset": asset, "category": category})
+
+# Barra de progresso única para uma melhor experiência do utilizador
+progress_bar = st.progress(0, text="A iniciar a análise...")
+
+results = []
+total_assets = len(assets_to_scan)
+
+# Itera sobre cada ativo para calcular o seu score
+for i, item in enumerate(assets_to_scan):
+    asset = item["asset"]
+    category = item["category"]
+    
+    progress_text = f"A analisar {asset} ({i+1}/{total_assets})..."
+    progress_bar.progress((i + 1) / total_assets, text=progress_text)
+    
+    final_score, verdict, individual_scores = calculate_synapse_score(asset)
+    
+    # Converte o score do COT para "N/A" se for o caso
+    if individual_scores.get('COT') == 0 and asset not in cot_market_map:
+        individual_scores['COT'] = "N/A"
+
+    row = {"Ativo": asset, "Score Final": final_score, "Veredito": verdict, "Categoria": category}
+    row.update(individual_scores)
+    results.append(row)
+
+progress_bar.empty()
+
+# --- EXIBIÇÃO DA TABELA DE RESULTADOS ---
+
+if results:
+    df_all = pd.DataFrame(results)
+    
+    # --- Lógica de Estilização (Heatmap) ---
+    def style_scores(val):
+        """Aplica cores às células de score."""
+        if isinstance(val, (int, float)):
+            if val > 0.5: return f'background-color: rgba(0, 150, 0, {min(abs(val), 1)}); color: white;'
+            elif val < -0.5: return f'background-color: rgba(150, 0, 0, {min(abs(val), 1)}); color: white;'
+        return ''
+
+    def style_verdict(verdict):
+        """Aplica cores à célula de veredito."""
+        color = 'grey'
+        if "Very Bullish" in verdict: color = '#006400'
+        elif "Bullish" in verdict: color = '#2E8B57'
+        elif "Very Bearish" in verdict: color = '#8B0000'
+        elif "Bearish" in verdict: color = '#B22222'
+        return f'color: {color}; font-weight: bold;'
+
+    # Itera sobre cada categoria para exibir uma tabela agrupada
+    for category_name in ASSET_CATEGORIES.keys():
+        st.subheader(category_name.replace("---", "").strip())
         
-        # 2. Iterar sobre cada ativo e calcular o seu score
-        scan_results = []
-        progress_bar = st.progress(0, text="A analisar ativos...")
-        total_assets = len(all_assets)
+        df_category = df_all[df_all["Categoria"] == category_name]
         
-        for i, asset_name in enumerate(all_assets):
-            total_score, verdict, individual_scores = calculate_synapse_score(asset_name)
+        if not df_category.empty:
+            df_display = df_category.sort_values(by="Score Final", ascending=False).reset_index(drop=True)
             
-            # 3. Montar o dicionário de resultados para a tabela
-            result = {
-                "Ativo": asset_name,
-                "Score": total_score,
-                "Veredito": verdict,
-                "COT": individual_scores.get('COT', {}).get('text', 'N/A'),
-                "Sazonalidade": individual_scores.get('Sazonalidade', {}).get('text', 'N/A')
+            column_order = ["Ativo", "Score Final", "Veredito", "Economia", "COT", "Sazonalidade"]
+            df_display = df_display[[col for col in column_order if col in df_display.columns]]
+            
+            # Formatação específica para a coluna COT
+            formatters = {
+                "Score Final": "{:.2f}",
+                "Economia": "{:.2f}",
+                "COT": lambda x: "N/A" if isinstance(x, str) else f"{x:.0f}"
             }
-            scan_results.append(result)
             
-            # Atualizar a barra de progresso
-            progress_text = f"A analisar {asset_name} ({i+1}/{total_assets})"
-            progress_bar.progress((i + 1) / total_assets, text=progress_text)
-        
-        progress_bar.empty() # Limpar a barra de progresso após a conclusão
+            styled_df = df_display.style.apply(
+                lambda x: x.map(style_scores), subset=[col for col in df_display.columns if col not in ['Ativo', 'Veredito']]
+            ).apply(
+                lambda x: x.map(style_verdict), subset=['Veredito']
+            ).format(formatters)
+            
+            st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
-    # 4. Converter os resultados para um DataFrame do Pandas
-    if scan_results:
-        df_scan = pd.DataFrame(scan_results)
-        df_scan = df_scan.sort_values(by="Score", ascending=False)
-        
-        # 5. Aplicar estilo para replicar o heatmap da referência
-        st.dataframe(
-            df_scan.style.background_gradient(
-                cmap='RdYlGn', # Gradiente de Vermelho -> Amarelo -> Verde
-                subset=['Score'],
-                vmin=-4, # Valor mínimo para o score
-                vmax=4   # Valor máximo para o score
-            ).format({
-                "Score": "{:+.0f}" # Formata o score para ter sinal (+/-)
-            }),
-            use_container_width=True,
-            height=800
-        )
-    else:
-        st.error("Não foi possível gerar a análise do scanner.")
+else:
+    st.error("Não foi possível calcular os scores. Verifique os motores de dados.")
 
-except Exception as e:
-    st.error(f"Ocorreu um erro inesperado ao gerar o scanner: {e}")
-# --- FIM DO MÓDULO Scanner_de_Mercado.py ---
+# --- RODAPÉ ---
