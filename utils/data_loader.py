@@ -16,8 +16,8 @@ except Exception as e:
 # --- FUNÇÕES DE CARREGAMENTO DE DADOS ---
 
 @st.cache_data(ttl=900)
-def get_yfinance_data(tickers, period=None, start=None, end=None):
-    """ Busca dados de preços de fecho do Yahoo Finance. """
+def get_yfinance_data(tickers, period=None, start=None, end=None, include_ohlc=False):
+    """ Busca dados de preços do Yahoo Finance. """
     try:
         data = yf.download(
             tickers=tickers, period=period, start=start, end=end,
@@ -25,12 +25,21 @@ def get_yfinance_data(tickers, period=None, start=None, end=None):
         )
         if data.empty:
             return pd.DataFrame()
+        
+        # Se for um único ticker e precisarmos de OHLC, retorna o DF completo
+        if isinstance(tickers, str) and include_ohlc:
+            return data
+            
+        # Para múltiplos tickers, ou se não precisarmos de OHLC, retorna apenas o 'Close'
         if isinstance(data.columns, pd.MultiIndex):
-            return data['Close']
+            # Para múltiplos tickers, yfinance retorna um MultiIndex. Pegamos apenas o 'Close'.
+            return data.get('Close', pd.DataFrame())
         elif 'Close' in data.columns:
             return data[['Close']]
         else:
-            return data
+            # Fallback para o caso de retornar uma única série (sem coluna 'Close')
+            return data.to_frame(name='Close')
+
     except Exception as e:
         st.error(f"Erro ao buscar dados do yfinance para {tickers}: {e}")
         return pd.DataFrame()
