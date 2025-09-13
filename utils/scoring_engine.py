@@ -5,7 +5,7 @@ import streamlit as st
 from firebase_config import db
 from .config import FRED_SERIES_MAP, cot_market_map
 
-# --- FUNÇÕES DE LEITURA DO FIRESTORE (O NOSSO "DATA WAREHOUSE") ---
+# --- FUNÇÕES DE LEITURA DO FIRESTORE ---
 
 def get_cot_history_from_firestore(asset_name):
     """Lê o histórico de dados do COT para um ativo a partir do Firestore."""
@@ -17,9 +17,7 @@ def get_cot_history_from_firestore(asset_name):
         df = pd.DataFrame.from_dict(data, orient='index')
         df.index = pd.to_datetime(df.index)
         return df.sort_index()
-    else:
-        # CORREÇÃO: Remove o aviso de diagnóstico. A função agora falha silenciosamente.
-        return pd.DataFrame()
+    return pd.DataFrame()
 
 def get_seasonality_from_firestore(asset_name):
     """Lê os dados de sazonalidade para um ativo a partir do Firestore."""
@@ -47,17 +45,16 @@ def get_economic_data_from_firestore(series_id):
 
 def score_cot_positioning(asset_name):
     """Calcula o score com base no posicionamento líquido do COT."""
-    # APERFEIÇOAMENTO: Verifica primeiro se o ativo deve ter dados COT.
     if asset_name not in cot_market_map:
-        return 0, "N/A"  # Retorna N/A (Não Aplicável) se não houver dados
-
+        # CORREÇÃO: Retorna None em vez de uma string para manter a consistência do tipo de dados.
+        return None, "N/A"
+    
     df_cot = get_cot_history_from_firestore(asset_name)
     if df_cot.empty or len(df_cot) < 4:
-        return 0, "Insuficiente" # Dados insuficientes para análise
+        return 0, "Insuficiente"
     
     latest_report = df_cot.iloc[-1]
     net_noncomm = latest_report['noncomm_long'] - latest_report['noncomm_short']
-    
     avg_net_noncomm = (df_cot['noncomm_long'] - df_cot['noncomm_short']).rolling(window=4).mean().iloc[-1]
 
     if net_noncomm > 0 and net_noncomm > avg_net_noncomm:
@@ -97,26 +94,21 @@ def score_economic_indicator(series_data, impact_direction):
 
     if impact_direction == 'negative':
         score *= -1
-        
     return score
 
 # --- FUNÇÕES DE CÁLCULO DE SCORE AGREGADO ---
 
 def calculate_overall_economic_score(currency):
     """Calcula o score económico agregado para uma determinada moeda."""
-    total_score = 0
-    count = 0
-    
+    total_score, count = 0, 0
     for series_name, series_info in FRED_SERIES_MAP.items():
         if series_info.get("currency") == currency:
             series_id = series_info.get("id")
             impact = series_info.get("impact_on_currency", "positive")
-            
             series_data = get_economic_data_from_firestore(series_id)
             if not series_data.empty:
                 total_score += score_economic_indicator(series_data, impact)
                 count += 1
-    
     return total_score / count if count > 0 else 0
 
 def calculate_synapse_score(asset_name):
@@ -137,7 +129,9 @@ def calculate_synapse_score(asset_name):
     else:
         scores['Economia'] = round(calculate_overall_economic_score("USD"), 2)
 
-    final_score = sum(scores.values())
+    # Filtra os scores nulos antes de somar
+    valid_scores = [s for s in scores.values() if s is not None]
+    final_score = sum(valid_scores)
     
     verdict = "Neutro"
     if final_score >= 1.5: verdict = "Very Bullish"
