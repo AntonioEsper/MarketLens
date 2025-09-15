@@ -2,6 +2,8 @@
 
 import pandas as pd
 import streamlit as st
+import plotly.graph_objects as go
+from datetime import datetime
 
 def prepare_seasonality_data_for_lines(df_price):
     """
@@ -83,3 +85,47 @@ def style_cot_table(val):
     else:
         return ''
 
+# --- NOVA FUNÇÃO PARA O GRÁFICO DE BARRAS DO HEATMAP ---
+def create_indicator_bar_chart(series_data, series_name):
+    """
+    Cria um gráfico de barras com os últimos 12 meses de um indicador económico
+    e uma linha de média.
+    """
+    if series_data is None or series_data.empty or len(series_data) < 12:
+        return None
+
+    # Pega nos últimos 12 pontos de dados
+    last_12_months = series_data.last('12M')
+    
+    # Calcula a média para o período
+    average_12m = last_12_months.mean()
+
+    fig = go.Figure()
+
+    # Adiciona as barras
+    fig.add_trace(go.Bar(
+        x=last_12_months.index,
+        y=last_12_months.values,
+        name=series_name,
+        marker_color=['#4caf50' if v > average_12m else '#f44336' for v in last_12_months.values]
+    ))
+
+    # Adiciona a linha de média
+    fig.add_trace(go.Scatter(
+        x=last_12_months.index,
+        y=[average_12m] * len(last_12_months),
+        mode='lines',
+        name=f'Média ({average_12m:,.2f})',
+        line=dict(color='yellow', dash='dash')
+    ))
+
+    fig.update_layout(
+        title=f'Histórico Mensal: {series_name}',
+        plot_bgcolor='#131722',
+        paper_bgcolor='#131722',
+        font_color='white',
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    
+    return fig

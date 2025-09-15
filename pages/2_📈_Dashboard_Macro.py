@@ -93,7 +93,7 @@ if ticker_selecionado:
             y=dados_series_close,
             mode='lines',
             name=ativo_selecionado,
-            line=dict(color='#3b82f6', width=2)
+            line=dict(color="#f6e33b", width=2)
         ))
         fig_principal.update_layout(
             height=500,
