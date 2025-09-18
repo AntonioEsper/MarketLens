@@ -98,7 +98,7 @@ with st.sidebar:
     if st.button(button_text, use_container_width=True):
         st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"; st.rerun()
 
-if 'user_info' not in st.session_state or st.session_state['user_info'] is None: st.switch_page("pages/1_👤_Login.py")
+if 'user_info' not in st.session_state or st.session_state['user_info'] is None: st.switch_page("pages/0_👤_Login.py")
 user_id = st.session_state['user_info'].get('localId'); user_email = st.session_state['user_info'].get('email')
 accounts = get_trading_accounts(user_id)
 account_options = {"Geral (Todas as Contas)": "all", **{acc['account_name']: acc['doc_id'] for acc in accounts}}
