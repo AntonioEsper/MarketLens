@@ -21,7 +21,7 @@ def initialize_firebase_admin():
             storage_bucket_name = st.secrets.get("firebase_storage_bucket")
             if not storage_bucket_name:
                 # Se não estiver nos segredos, constrói-o a partir do project_id como um fallback.
-                storage_bucket_name = f"{creds_dict['project_id']}.appspot.com"
+                storage_bucket_name = f"{creds_dict['project_id']}.firebasestorage.app"
             
             firebase_admin.initialize_app(cred, {
                 'storageBucket': storage_bucket_name
